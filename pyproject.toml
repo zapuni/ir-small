@@ -1,0 +1,56 @@
+[project]
+name = "offline-rag-competition"
+version = "1.0.0"
+description = "Offline RAG Student Server — Vietnamese MCQ answering on CPU (no GPU)"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+# Exact, pinned versions — the set that was tested and verified to work together
+# on Windows + CPU (Python 3.13). Pinning with '==' guarantees reproducible
+# installs on the competition machine.
+dependencies = [
+    # ---- Web server -----------------------------------------------------
+    "fastapi==0.136.3",
+    "uvicorn[standard]==0.48.0",
+    "starlette==1.2.1",
+    "pydantic==2.10.3",
+
+    # ---- LLM client (OpenAI-compatible: temp endpoint or Teacher proxy) --
+    "openai==2.38.0",
+    "httpx==0.28.1",
+
+    # ---- Embedding (Vietnamese SBERT) — runs on CPU ---------------------
+    "sentence-transformers==5.5.1",
+    "torch==2.12.0",            # default PyPI wheel on Windows IS the CPU build
+    "transformers==5.9.0",
+    "tokenizers==0.22.2",
+    "huggingface-hub==1.17.0",
+    "safetensors==0.7.0",
+
+    # ---- Numerics / retrieval ------------------------------------------
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    "scikit-learn==1.8.0",
+    "rank-bm25==0.2.2",
+    "pyvi==0.1.1",              # Vietnamese word segmentation for BM25
+
+    # ---- Utilities ------------------------------------------------------
+    "python-dotenv==1.2.2",
+    "requests==2.32.5",
+]
+
+[tool.uv]
+# This is an application, not an importable library, so don't try to build/
+# install the project itself — just manage its dependencies in the venv.
+package = false
+
+[tool.uv.sources]
+# Force the CPU build of PyTorch from the official CPU index (keeps the install
+# small and GPU-free). On Windows the default wheel is already CPU-only, but
+# pinning the source makes it explicit and reproducible on any OS.
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

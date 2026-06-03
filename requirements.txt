@@ -1,0 +1,43 @@
+# =========================================================================
+#  Pinned dependencies (exact versions, tested & verified on Windows + CPU).
+#
+#  PREFERRED: use uv with the lockfile instead of this file:
+#      uv sync                      # reproduces the EXACT locked environment
+#
+#  This file is a fallback for plain pip:
+#      pip install -r requirements.txt
+#
+#  NOTE: torch here is the generic wheel. On Windows it is already CPU-only.
+#  On Linux/macOS, to guarantee the CPU build use the uv workflow (which pins
+#  the https://download.pytorch.org/whl/cpu index) or install torch separately:
+#      pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
+# =========================================================================
+
+# ---- Web server ----------------------------------------------------------
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+starlette==1.2.1
+pydantic==2.10.3
+
+# ---- LLM client (OpenAI-compatible: temp endpoint or Teacher proxy) ------
+openai==2.38.0
+httpx==0.28.1
+
+# ---- Embedding (Vietnamese SBERT) — runs on CPU --------------------------
+sentence-transformers==5.5.1
+torch==2.12.0
+transformers==5.9.0
+tokenizers==0.22.2
+huggingface-hub==1.17.0
+safetensors==0.7.0
+
+# ---- Numerics / retrieval ------------------------------------------------
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.8.0
+rank-bm25==0.2.2
+pyvi==0.1.1
+
+# ---- Utilities -----------------------------------------------------------
+python-dotenv==1.2.2
+requests==2.32.5

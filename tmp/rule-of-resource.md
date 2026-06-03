@@ -1,0 +1,6 @@
+ngắt internet của các bạn, các bạn sẽ chỉ gọi được vào máy của anh (Teacher Server) và Server bên anh sẽ gửi request bên server của các bạn (Student Servers) để chấm điểm, các bạn lúc này chỉ có thể sửa logic của server và prompt bằng tay để nâng được số điểm lên, sequence length của Proxy LLM sẽ có thể trong khoảng 2048-4096 tokens, nên phải tìm cách tối ưu prompt. Đề anh cũng đã ném rồi không hiểu gì thì chủ động hỏi trên này nhé
+
+Mô tả cụ thể quá trình chấm điểm: Khi Teacher và Student Servers đã được bật, bên bọn em sẽ phải gửi 2 request đến 2 endpoint là /register để định danh server của mình và /evaluate để yêu cầu Teacher server gửi tài liệu lên Student Server, sau đó gửi lần lượt 10 câu hỏi trắc nghiệm đến cho Student Server, nếu thời gian quá 60 giây 1 câu trả lời sẽ không tính điểm, tổng là 10 điểm, được phép chạy lại register và evaluate nhiều lần để kéo điểm lên, điểm cao nhất sẽ là điểm chính
+
+Model LLM: Qwen3, Qwen3.5 from 4B to 8B quantize FP8 or INT4, max token 4096.
+Model Embedding: Ưu tiên model SOTA tiếng Việt nhỏ nhẹ chạy đc trên CPU nhanh chóng(keepitreal/vietnamese-ssbert;...)
