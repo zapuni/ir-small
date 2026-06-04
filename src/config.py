@@ -30,6 +30,8 @@ PROJECT_ROOT = SRC_DIR.parent
 # Load .env from the project root (…/ir/.env). override=False keeps any real
 # environment variables you export at the shell taking precedence.
 load_dotenv(PROJECT_ROOT / ".env", override=False)
+# Optional local overrides (e.g. Qwen test endpoint) — not committed.
+load_dotenv(PROJECT_ROOT / ".env.local", override=False)
 
 
 def _get(name: str, default: str) -> str:
@@ -82,12 +84,27 @@ def resolve_llm() -> tuple[str, str, str]:
 
 
 LLM_TEMPERATURE: float = float(_get("LLM_TEMPERATURE", "0.0"))
-# Reasoning-capable models burn tokens on internal thinking, so keep this
-# generous. The final answer is just one letter, but the model may "think"
-# first. 256 is plenty for short reasoning + the letter.
 LLM_MAX_TOKENS: int = int(_get("LLM_MAX_TOKENS", "512"))
 LLM_TIMEOUT: float = float(_get("LLM_TIMEOUT", "30"))      # seconds per attempt
 LLM_MAX_RETRIES: int = int(_get("LLM_MAX_RETRIES", "1"))
+
+# Prompt / generation profile for small exam LLMs (Qwen3/3.5 4B–8B).
+#   auto  -> detect from model name (qwen -> qwen_small)
+#   qwen_small | reasoning | default
+LLM_PROFILE: str = _get("LLM_PROFILE", "auto").lower()
+# Qwen3 "thinking" burns most of the 60s budget; disable for MCQ (vLLM/SGLang).
+# Empty = auto (off for qwen_small, on for reasoning profile).
+_think_env = _get("LLM_ENABLE_THINKING", "").lower()
+if _think_env in ("0", "false", "no", "off"):
+    LLM_ENABLE_THINKING: bool | None = False
+elif _think_env in ("1", "true", "yes", "on"):
+    LLM_ENABLE_THINKING = True
+else:
+    LLM_ENABLE_THINKING = None
+
+# Cap retrieved context so the prompt fits proxy seq len (2048–4096 tokens).
+CONTEXT_MAX_CHARS: int = int(_get("CONTEXT_MAX_CHARS", "6000"))
+CONTEXT_MAX_CHUNK_CHARS: int = int(_get("CONTEXT_MAX_CHUNK_CHARS", "900"))
 
 # --------------------------------------------------------------------------- #
 # Teacher server (competition control plane)                                   #
@@ -129,12 +146,35 @@ PORT: int = int(_get("PORT", "5000"))
 ASK_DEADLINE: float = float(_get("ASK_DEADLINE", "45"))
 
 
+def resolve_llm_profile(model: str) -> str:
+    """Return active prompt profile: qwen_small, reasoning, or default."""
+    if LLM_PROFILE not in ("", "auto"):
+        return LLM_PROFILE
+    m = model.lower()
+    if "qwen" in m:
+        return "qwen_small"
+    if any(x in m for x in ("mimo", "o1", "reason", "r1")):
+        return "reasoning"
+    return "default"
+
+
+def resolve_enable_thinking(model: str) -> bool:
+    """Whether to allow Qwen-style thinking blocks (slow; off for exam MCQ)."""
+    if LLM_ENABLE_THINKING is not None:
+        return bool(LLM_ENABLE_THINKING)
+    return resolve_llm_profile(model) == "reasoning"
+
+
 def describe() -> str:
     base, key, model = resolve_llm()
     masked = (key[:4] + "…") if key else "(none)"
     mode = "PROXY (Teacher)" if (LLM_USE_PROXY or not LLM_BASE_URL) else "GENERIC (.env)"
+    prof = resolve_llm_profile(model)
+    think = resolve_enable_thinking(model)
     return (
         f"LLM mode={mode} | base_url={base} | model={model} | key={masked}\n"
+        f"profile={prof} | thinking={think} | max_tokens={LLM_MAX_TOKENS}\n"
         f"embed={EMBED_MODEL_NAME} | chunk={CHUNK_SIZE_WORDS}/{CHUNK_OVERLAP_WORDS} "
-        f"| top_k_ctx={TOP_K_CONTEXT} | ask_deadline={ASK_DEADLINE}s"
+        f"| top_k_ctx={TOP_K_CONTEXT} | ctx_max_chars={CONTEXT_MAX_CHARS} "
+        f"| ask_deadline={ASK_DEADLINE}s"
     )

@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 import config
 from embedder import warm_up
-from llm import fallback_answer, get_client
+from llm import fallback_answer, get_client, trim_contexts
 from retriever import INDEX
 from textutils import parse_mc_question
 
@@ -125,7 +125,7 @@ def ask(req: AskRequest):
             queries.append(f"{mcq.stem} {mcq.options[letter]}")
 
     results = INDEX.search(queries, top_k=config.TOP_K_CONTEXT)
-    contexts = [r.chunk for r in results]
+    contexts = trim_contexts([r.chunk for r in results])
 
     # 1) Try the LLM, but never exceed the wall-clock deadline. Run it in a
     #    worker thread so a hung socket can't block past the budget.

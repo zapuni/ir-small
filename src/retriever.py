@@ -165,12 +165,17 @@ class HybridIndex:
             if not fused:
                 return []
 
-            # take a generous candidate pool, then diversify with MMR
+            # Re-rank pool by fused RRF score, then diversify with MMR.
+            # For small LLMs, favour relevance (higher lambda) over diversity.
             pool = sorted(fused.keys(), key=lambda i: -fused[i])
-            pool = pool[: max(top_k * 3, config.TOP_K_DENSE)]
+            pool = pool[: max(top_k * 4, config.TOP_K_DENSE + 4)]
 
             primary_vec = q_vecs[0]
-            ordered = self._mmr(pool, primary_vec, top_k, config.MMR_LAMBDA)
+            mmr_lambda = config.MMR_LAMBDA
+            if len(queries) > 1:
+                # Option-aware retrieval: keep chunks that match the stem best.
+                mmr_lambda = min(0.85, mmr_lambda + 0.25)
+            ordered = self._mmr(pool, primary_vec, top_k, mmr_lambda)
 
             return [
                 RetrievalResult(chunk=self.chunks[i], score=fused[i], index=i)

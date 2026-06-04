@@ -96,9 +96,10 @@ Mở `ir/.env`:
 - **Chuyển sang Teacher proxy** khi thi: đặt `LLM_USE_PROXY=true` (hoặc xoá
   `LLM_BASE_URL`). Khi đó key chính là `STUDENT_ID`, model là `LLM_MODEL`.
 
-> Lưu ý: LLM tạm thời (`mimo-v2.5-pro`) là **reasoning model** — nó "suy nghĩ" tốn
-> token trước khi trả lời, nên `LLM_MAX_TOKENS=512`. Code tự đọc cả `content` lẫn
-> `reasoning_content` để lấy đáp án.
+> **Qwen3/3.5 (4B–8B, ngày thi):** đặt `LLM_ENABLE_THINKING=false` (mặc định khi
+> model có tên `qwen`). Code tự tắt thinking qua `chat_template_kwargs`, prompt ngắn
+> dạng `<context>`, và `LLM_MAX_TOKENS=96`. Có thể ghi đè endpoint trong `.env.local`.
+> Reasoning model (mimo, …): profile `reasoning`, `LLM_MAX_TOKENS=512`.
 
 ## Chạy server (máy thi)
 
@@ -144,5 +145,7 @@ uv run python scripts/compete.py reset         # reset nếu cần
 | `TOP_K_DENSE` / `TOP_K_BM25` | 12 / 12 | số ứng viên mỗi retriever |
 | `MMR_LAMBDA` | 0.3 | cân bằng liên quan ↔ đa dạng |
 | `ASK_DEADLINE` | 45 | hạn chót (giây) cho /ask trước khi fallback |
-| `LLM_MAX_TOKENS` | 512 | đủ cho reasoning model |
-```
+| `LLM_PROFILE` | auto | `qwen_small` / `reasoning` / `default` |
+| `LLM_ENABLE_THINKING` | auto | `false` cho Qwen MCQ (nhanh, ~1s/câu) |
+| `LLM_MAX_TOKENS` | 96 (Qwen) | 512 cho reasoning model |
+| `CONTEXT_MAX_CHARS` | 5500 | cắt ngữ cảnh vừa seq len proxy |

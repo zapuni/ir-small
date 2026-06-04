@@ -201,8 +201,12 @@ def extract_answer_letter(text: str, valid: List[str] | None = None) -> str | No
     if t in valid:
         return t
 
-    # 2) explicit conclusion phrases (EN + VI). Take the LAST match — reasoning
-    #    models restate options then conclude, e.g. "the correct answer is B".
+    # 2) JSON {"answer":"B"} (common for small Qwen MCQ prompts)
+    m_json = re.search(r'"ANSWER"\s*:\s*"([ABCD])"', t)
+    if m_json and m_json.group(1) in valid:
+        return m_json.group(1)
+
+    # 3) explicit conclusion phrases (EN + VI). Take the LAST match.
     concl = re.findall(
         r"(?:CORRECT\s+ANSWER\s+IS|ANSWER\s+IS|FINAL\s+ANSWER\s*[:\-]?|"
         r"ANSWER\s*[:\-]|ĐÁP\s*ÁN\s*(?:LÀ|ĐÚNG\s*LÀ)?\s*[:\-]?|"
