@@ -1,0 +1,197 @@
+# Chunking Strategy Visualization
+
+## 1. Sentence-Aware Chunking with Overlap
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Original Text (1000 words)                                               │
+│ ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐│
+│ │ Sent 1  │ Sent 2  │ Sent 3  │ Sent 4  │ Sent 5  │ Sent 6  │ Sent 7  ││
+│ └─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘│
+└─────────────────────────────────────────────────────────────────────────┘
+
+                              ↓ Chunking (180 words, 40 overlap)
+
+┌────────────────────────────┐
+│ Chunk 1 (180 words)        │ ← Sent 1 + Sent 2 + Sent 3
+│ [Sent 1][Sent 2][Sent 3]   │
+└───────────────┬────────────┘
+                │  ↓ Overlap (40 words from end of Sent 3)
+                └──────────┐
+┌───────────────────────────┴────┐
+│ Chunk 2 (180 words)            │ ← [Sent 3 tail] + Sent 4 + Sent 5
+│ [Sent 3 tail][Sent 4][Sent 5]  │
+└────────────────┬───────────────┘
+                 │  ↓ Overlap (40 words from end of Sent 5)
+                 └──────────┐
+┌────────────────────────────┴───┐
+│ Chunk 3 (180 words)            │ ← [Sent 5 tail] + Sent 6 + Sent 7
+│ [Sent 5 tail][Sent 6][Sent 7]  │
+└────────────────────────────────┘
+
+## 2. Overlap Visualization
+
+Text: "AI là gì? ML khác DL. RAG kết hợp retrieval và generation."
+
+┌──────────────────────────────────────┐
+│ Chunk 1                              │
+│ "AI là gì? ML khác DL."              │
+└──────────────────┬───────────────────┘
+                   │ Overlap: "ML khác DL."
+                   ↓
+┌──────────────────┴───────────────────┐
+│ Chunk 2                              │
+│ "ML khác DL. RAG kết hợp..."        │
+└──────────────────────────────────────┘
+
+→ Context "ML khác DL" preserved!
+→ Query về "ML" hoặc "DL" sẽ match cả 2 chunks
+
+## 3. Adaptive Chunking by Model
+
+┌────────────────────────────────────────────────────────────────┐
+│ Model: keepitreal/vietnamese-sbert (256 tokens max)            │
+│ ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐   │
+│ │ Chunk 1    │ │ Chunk 2    │ │ Chunk 3    │ │ Chunk 4    │   │
+│ │ 160 words  │ │ 160 words  │ │ 160 words  │ │ 160 words  │   │
+│ └─────┬──────┘ └─────┬──────┘ └─────┬──────┘ └────────────┘   │
+│       │ 45 overlap   │ 45 overlap   │ 45 overlap              │
+└───────┴──────────────┴──────────────┴─────────────────────────┘
+  More chunks, higher precision, good for small models
+
+┌────────────────────────────────────────────────────────────────┐
+│ Model: AITeamVN/Vietnamese_Embedding (512 tokens max)          │
+│ ┌──────────────────────┐ ┌──────────────────────┐             │
+│ │ Chunk 1              │ │ Chunk 2              │             │
+│ │ 320 words            │ │ 320 words            │             │
+│ └──────────┬───────────┘ └──────────────────────┘             │
+│            │ 85 overlap                                        │
+└────────────┴───────────────────────────────────────────────────┘
+  Fewer chunks, better overview, optimal for medium models
+
+┌────────────────────────────────────────────────────────────────┐
+│ Model: jinaai/jina-embeddings-v5 (8192 tokens max)             │
+│ ┌─────────────────────────────────────────────┐                │
+│ │ Chunk 1                                     │                │
+│ │ 600 words                                   │                │
+│ └──────────────────────┬──────────────────────┘                │
+│                        │ 160 overlap                           │
+└────────────────────────┴────────────────────────────────────────┘
+  Very large chunks, best overview, for ultra-long context models
+
+## 4. Overlap Ratio Comparison
+
+LOW OVERLAP (20%):
+┌──────────┐
+│ Chunk 1  │
+└────┬─────┘
+     │ 20% overlap  ← Context loss risk
+     ↓
+┌────┴─────┐
+│ Chunk 2  │
+└──────────┘
+
+OPTIMAL OVERLAP (27%):
+┌──────────┐
+│ Chunk 1  │
+└──────┬───┘
+       │ 27% overlap  ← Sweet spot! ✅
+       ↓
+┌──────┴───┐
+│ Chunk 2  │
+└──────────┘
+
+HIGH OVERLAP (40%):
+┌──────────┐
+│ Chunk 1  │
+└────────┬─┘
+         │ 40% overlap  ← Redundant
+         ↓
+┌────────┴─┐
+│ Chunk 2  │
+└──────────┘
+
+## 5. Context Preservation Example
+
+Original: "Machine Learning là nhánh của AI. Deep Learning sử dụng neural 
+          networks. RAG kết hợp retrieval và generation."
+
+WITHOUT overlap:
+┌────────────────────────────────┐
+│ Chunk 1: "ML là nhánh của AI.  │
+│ Deep Learning..."              │
+└────────────────────────────────┘
+                                    ← Gap!
+┌────────────────────────────────┐
+│ Chunk 2: "RAG kết hợp..."      │  ← Lost context về Deep Learning!
+└────────────────────────────────┘
+
+WITH 27% overlap:
+┌────────────────────────────────┐
+│ Chunk 1: "ML là nhánh của AI.  │
+│ Deep Learning sử dụng..."      │
+└────────────┬───────────────────┘
+             │ Overlap: "Deep Learning sử dụng neural networks."
+             ↓
+┌────────────┴───────────────────┐
+│ Chunk 2: "Deep Learning...     │  ← Context preserved! ✅
+│ RAG kết hợp..."                │
+└────────────────────────────────┘
+
+## 6. Query Matching Visualization
+
+Query: "Deep Learning hoạt động như thế nào?"
+
+Embedding: [0.2, 0.8, 0.5, ...]
+
+┌─────────────────────────────────┐
+│ Chunk 1                         │
+│ "ML là nhánh của AI.            │  Similarity: 0.72 ✅
+│ Deep Learning sử dụng NN..."   │  → Matches "Deep Learning"
+└─────────────────────────────────┘
+
+┌─────────────────────────────────┐
+│ Chunk 2                         │
+│ "Deep Learning sử dụng NN.      │  Similarity: 0.85 ✅✅
+│ NN có nhiều layers..."          │  → Best match! Có detail
+└─────────────────────────────────┘
+
+┌─────────────────────────────────┐
+│ Chunk 3                         │
+│ "RAG kết hợp retrieval..."      │  Similarity: 0.35
+└─────────────────────────────────┘  → Low relevance
+
+Result: Retrieve Chunk 2 and Chunk 1 (both contain answer!)
+
+## 7. Trade-off Visualization
+
+┌─────────────────────────────────────────────────────────────┐
+│                                                              │
+│  Chunk Size                                                  │
+│                                                              │
+│  Small (120w)         Medium (180w)          Large (400w)   │
+│  ├────────┐           ├────────────┐         ├──────────────┤
+│  │        │           │            │         │              │
+│  │        │           │            │         │              │
+│  └────────┘           └────────────┘         └──────────────┘
+│                                                              │
+│  + High Precision     + Balanced             + High Recall  │
+│  + Fast search        + Good quality         + Overview     │
+│  - Lost overview      - Standard             - Noisy        │
+│  - More chunks        - OK latency           - Slow search  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                                                              │
+│  Overlap Ratio                                               │
+│                                                              │
+│  Low (15%)            Optimal (27%)          High (40%)     │
+│  ├──┐                 ├────┐                 ├──────┐       │
+│  │  │overlap          │    │overlap          │      │overlap│
+│  └──┘                 └────┘                 └──────┘       │
+│                                                              │
+│  - Context loss       + Context saved        + Max context  │
+│  + Fast               + Balanced             - Redundant    │
+│  + Less storage       + Recommended          - Slow         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘

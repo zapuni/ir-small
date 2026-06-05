@@ -94,12 +94,34 @@ def health():
     return {"status": "ok", "indexed": INDEX.ready, "chunks": len(INDEX.chunks)}
 
 
+@app.get("/cache/stats")
+def cache_stats():
+    """Get vector cache statistics."""
+    import vector_cache
+    return vector_cache.get_cache_stats()
+
+
+@app.get("/cache/list")
+def cache_list():
+    """List all cached embeddings."""
+    import vector_cache
+    return {"caches": vector_cache.list_cache()}
+
+
+@app.delete("/cache/clear")
+def cache_clear(model: Optional[str] = None, doc_id: Optional[str] = None):
+    """Clear vector cache."""
+    import vector_cache
+    count = vector_cache.clear_cache(model_name=model, doc_id=doc_id)
+    return {"deleted": count}
+
+
 @app.post("/upload", response_model=UploadResponse)
 def upload(req: UploadRequest):
     """Receive a document, chunk + embed + index it."""
     t0 = time.time()
     doc_id = req.doc_id or "none"
-    n_chunks = INDEX.build(req.text or "")
+    n_chunks = INDEX.build(req.text or "", doc_id=doc_id, use_cache=True)
     print(
         f"[upload] doc_id={doc_id} chunks={n_chunks} "
         f"chars={len(req.text or '')} took={time.time() - t0:.2f}s"

@@ -115,7 +115,11 @@ TEACHER_BASE_URL: str = _get("TEACHER_BASE_URL", "http://192.168.50.218:8000/api
 # Embedding model (downloaded once, then loaded locally on CPU)                #
 # --------------------------------------------------------------------------- #
 EMBED_MODEL_NAME: str = _get("EMBED_MODEL_NAME", "keepitreal/vietnamese-sbert")
-MODEL_DIR: Path = Path(_get("MODEL_DIR", str(SRC_DIR / "models" / "vietnamese-sbert")))
+# Cache directory for embedding models (each model cached separately)
+EMBED_CACHE_DIR: Path = Path(_get("EMBED_CACHE_DIR", str(SRC_DIR / "models")))
+# Auto-detect model directory based on model name
+_model_folder_name = EMBED_MODEL_NAME.replace("/", "_").replace("\\", "_")
+MODEL_DIR: Path = EMBED_CACHE_DIR / _model_folder_name
 EMBED_MAX_SEQ_LEN: int = int(_get("EMBED_MAX_SEQ_LEN", "256"))
 EMBED_BATCH_SIZE: int = int(_get("EMBED_BATCH_SIZE", "32"))
 
@@ -124,6 +128,8 @@ EMBED_BATCH_SIZE: int = int(_get("EMBED_BATCH_SIZE", "32"))
 # --------------------------------------------------------------------------- #
 CHUNK_SIZE_WORDS: int = int(_get("CHUNK_SIZE_WORDS", "180"))
 CHUNK_OVERLAP_WORDS: int = int(_get("CHUNK_OVERLAP_WORDS", "40"))
+# Enable adaptive chunking based on embedding model (auto-adjust size & overlap)
+CHUNK_ADAPTIVE: bool = _get("CHUNK_ADAPTIVE", "true").lower() in ("1", "true", "yes")
 
 # --------------------------------------------------------------------------- #
 # Retrieval                                                                    #

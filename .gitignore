@@ -13,6 +13,9 @@ venv/
 # Downloaded embedding model (large; re-download with download_model.py)
 src/models/
 
+# Vector embeddings cache (regenerate on demand)
+cache/
+
 # OS
 Thumbs.db
 .DS_Store

@@ -26,6 +26,10 @@ dependencies = [
     "tokenizers==0.22.2",
     "huggingface-hub==1.17.0",
     "safetensors==0.7.0",
+    
+    # Optional for Jina v5 embeddings (LoRA adapters)
+    "peft==0.19.1",
+    "accelerate==1.13.0",
 
     # ---- Numerics / retrieval ------------------------------------------
     "numpy==2.4.6",

@@ -44,11 +44,56 @@ class HybridIndex:
     # ------------------------------------------------------------------ #
     # Build                                                              #
     # ------------------------------------------------------------------ #
-    def build(self, text: str) -> int:
-        """Chunk -> embed -> build BM25. Returns the number of chunks."""
+    def build(self, text: str, doc_id: str = "none", use_cache: bool = True) -> int:
+        """
+        Chunk -> embed -> build BM25. Returns the number of chunks.
+        
+        Args:
+            text: Document text
+            doc_id: Document ID (for caching)
+            use_cache: If True, try to load from cache; if False, always re-embed
+        """
         from rank_bm25 import BM25Okapi
+        import vector_cache
 
-        chunks = chunk_text(text)
+        # Try to load from cache first
+        if use_cache:
+            cached = vector_cache.load_cache(
+                model_name=config.EMBED_MODEL_NAME,
+                doc_id=doc_id,
+                text=text,
+            )
+            
+            if cached is not None:
+                chunks, embeddings, metadata = cached
+                print(f"[retriever] ✓ Loaded from cache (skip embedding)")
+                
+                # Build index from cached data
+                with self._lock:
+                    self.chunks = chunks
+                    self.embeddings = embeddings
+                    
+                    self._tokenized = [tokenize_vi(c) for c in chunks]
+                    self._tokenized = [t if t else ["<empty>"] for t in self._tokenized]
+                    self._bm25 = BM25Okapi(self._tokenized)
+                    
+                    self.ready = True
+                    print(f"[retriever] Indexed {len(chunks)} chunks from cache")
+                    return len(chunks)
+
+        # No cache or cache disabled -> embed from scratch
+        from textutils import get_optimal_chunk_config
+        
+        if config.CHUNK_ADAPTIVE:
+            chunk_config = get_optimal_chunk_config()
+            print(f"[retriever] Using adaptive chunking: {chunk_config['chunk_size']} words, "
+                  f"{chunk_config['overlap']} overlap ({chunk_config['overlap_ratio']:.0%})")
+            print(f"[retriever] Reason: {chunk_config['reasoning']}")
+        else:
+            print(f"[retriever] Using manual config: {config.CHUNK_SIZE_WORDS} words, "
+                  f"{config.CHUNK_OVERLAP_WORDS} overlap")
+        
+        chunks = chunk_text(text, use_adaptive=config.CHUNK_ADAPTIVE)
         if not chunks:
             chunks = [text.strip()] if text.strip() else []
 
@@ -62,7 +107,9 @@ class HybridIndex:
                 return 0
 
             emb = Embedder.get()
-            self.embeddings = emb.encode(chunks)
+            # Encode chunks as passages (not queries)
+            print(f"[retriever] Embedding {len(chunks)} chunks...")
+            self.embeddings = emb.encode(chunks, is_query=False)
 
             self._tokenized = [tokenize_vi(c) for c in chunks]
             # guard against empty token lists (BM25 needs non-empty docs)
@@ -70,6 +117,21 @@ class HybridIndex:
             self._bm25 = BM25Okapi(self._tokenized)
 
             self.ready = True
+            print(f"[retriever] Indexed {len(chunks)} chunks")
+            
+            # Save to cache
+            if use_cache:
+                try:
+                    vector_cache.save_cache(
+                        model_name=config.EMBED_MODEL_NAME,
+                        doc_id=doc_id,
+                        text=text,
+                        chunks=chunks,
+                        embeddings=self.embeddings,
+                    )
+                except Exception as e:
+                    print(f"[retriever] Warning: Failed to save cache: {e!r}")
+            
             return len(chunks)
 
     # ------------------------------------------------------------------ #
@@ -156,7 +218,8 @@ class HybridIndex:
             emb = Embedder.get()
 
             rankings: List[List[Tuple[int, float]]] = []
-            q_vecs = emb.encode(queries)
+            # Encode queries as queries (with proper prefix if needed)
+            q_vecs = emb.encode(queries, is_query=True)
             for qi, q in enumerate(queries):
                 rankings.append(self._dense(q_vecs[qi], config.TOP_K_DENSE))
                 rankings.append(self._bm25_search(q, config.TOP_K_BM25))

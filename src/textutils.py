@@ -43,6 +43,76 @@ def tokenize_vi(text: str) -> List[str]:
 # --------------------------------------------------------------------------- #
 _SENT_SPLIT = re.compile(r"(?<=[\.\!\?\;:])\s+|\n{2,}")
 
+# Model-specific optimal chunking configurations
+# Based on model's max_seq_length and Vietnamese tokenization (~1.4 token/word)
+MODEL_CHUNK_CONFIGS = {
+    "keepitreal/vietnamese-sbert": {
+        "chunk_size": 160,
+        "overlap": 45,
+        "reasoning": "256 tokens max, optimal for short context",
+    },
+    "aiteamvn/vietnamese_embedding": {
+        "chunk_size": 320,
+        "overlap": 85,
+        "reasoning": "512 tokens (BGE-M3), utilize full capacity",
+    },
+    "thanhtantran/vietnamese_embedding": {
+        "chunk_size": 320,
+        "overlap": 85,
+        "reasoning": "512 tokens (BGE-M3 v2), utilize full capacity",
+    },
+    "dangvantuan/vietnamese-embedding": {
+        "chunk_size": 150,
+        "overlap": 40,
+        "reasoning": "256 tokens (PhoBERT), conservative chunking",
+    },
+    "jinaai/jina-embeddings-v5": {
+        "chunk_size": 600,
+        "overlap": 160,
+        "reasoning": "8192 tokens, can handle long context",
+    },
+    "intfloat/multilingual-e5": {
+        "chunk_size": 320,
+        "overlap": 85,
+        "reasoning": "512 tokens (XLM-RoBERTa), balanced approach",
+    },
+}
+
+
+def get_optimal_chunk_config(model_name: str | None = None) -> dict:
+    """
+    Get optimal chunk size and overlap for the current embedding model.
+    
+    Returns dict with:
+        - chunk_size: optimal number of words per chunk
+        - overlap: optimal number of overlap words
+        - overlap_ratio: overlap / chunk_size
+    
+    Falls back to config.CHUNK_SIZE_WORDS if model not found.
+    """
+    if not model_name:
+        model_name = config.EMBED_MODEL_NAME
+    
+    model_lower = model_name.lower()
+    
+    # Find matching config
+    for pattern, cfg in MODEL_CHUNK_CONFIGS.items():
+        if pattern in model_lower:
+            return {
+                "chunk_size": cfg["chunk_size"],
+                "overlap": cfg["overlap"],
+                "overlap_ratio": cfg["overlap"] / cfg["chunk_size"],
+                "reasoning": cfg["reasoning"],
+            }
+    
+    # Fallback to config values
+    return {
+        "chunk_size": config.CHUNK_SIZE_WORDS,
+        "overlap": config.CHUNK_OVERLAP_WORDS,
+        "overlap_ratio": config.CHUNK_OVERLAP_WORDS / config.CHUNK_SIZE_WORDS,
+        "reasoning": "Using .env config (no model-specific optimization)",
+    }
+
 
 def _normalise(text: str) -> str:
     text = unicodedata.normalize("NFC", text)
@@ -61,6 +131,7 @@ def chunk_text(
     text: str,
     chunk_size: int | None = None,
     overlap: int | None = None,
+    use_adaptive: bool = True,
 ) -> List[str]:
     """
     Sentence-aware sliding-window chunker measured in words.
@@ -68,9 +139,24 @@ def chunk_text(
     Sentences are grouped until the word budget is reached, then a new chunk
     starts while carrying `overlap` words from the tail of the previous chunk.
     This keeps semantic boundaries intact while preserving local context.
+    
+    Args:
+        text: Input text to chunk
+        chunk_size: Target chunk size in words (None = auto-detect from model)
+        overlap: Overlap words between chunks (None = auto-detect from model)
+        use_adaptive: If True, auto-detect optimal config based on embedding model
+    
+    Returns:
+        List of text chunks (deduplicated, order preserved)
     """
-    chunk_size = chunk_size or config.CHUNK_SIZE_WORDS
-    overlap = overlap or config.CHUNK_OVERLAP_WORDS
+    # Auto-detect optimal config if not specified
+    if use_adaptive and (chunk_size is None or overlap is None):
+        optimal = get_optimal_chunk_config()
+        chunk_size = chunk_size or optimal["chunk_size"]
+        overlap = overlap or optimal["overlap"]
+    else:
+        chunk_size = chunk_size or config.CHUNK_SIZE_WORDS
+        overlap = overlap or config.CHUNK_OVERLAP_WORDS
 
     text = _normalise(text)
     if not text:

@@ -8,17 +8,22 @@ phản hồi nhanh cho từng request. Xây dựng theo đúng đặc tả trong
 ```
           /upload                         /ask
  text ──► chunk (câu, ~180 từ, overlap 40)  question ─► tách stem + A/B/C/D
-       └► embed (vietnamese-sbert, CPU)              └► hybrid retrieve:
-       └► BM25 (pyvi word-seg)                            • dense (SBERT cosine)
-       └► lưu vào index trong RAM                         • BM25 (lexical)
-                                                          • RRF fusion + MMR
+       └► embed (multi-model support, CPU)          └► hybrid retrieve:
+       └► cache embeddings per model ⚡              • dense (cosine)
+       └► BM25 (pyvi word-seg)                            • BM25 (lexical)
+       └► lưu vào index trong RAM                         • RRF fusion + MMR
                                                        └► LLM (qua .env) ─► 1 ký tự
                                                        └► fallback embedding nếu LLM lỗi
 ```
 
 Điểm chính:
-- **Embedding local**: `keepitreal/vietnamese-sbert` (PhoBERT, 768d) tải sẵn về
-  `src/models/`, chạy hẳn trên CPU, dùng hết số core.
+- **Multi-model embedding support**: Dễ dàng thay đổi model trong `.env`, hỗ trợ
+  Vietnamese-specific (AITeamVN, dangvantuan, keepitreal) và multilingual models
+  (Jina AI v5, E5). Mỗi model cache riêng biệt. Xem `docs/EMBEDDING_MODELS.md`.
+- **Persistent vector cache** ⚡: Embeddings được cache per model. Switch model rồi
+  quay lại → load cache, không embed lại (15x faster!). Xem `docs/VECTOR_CACHE.md`.
+- **Adaptive chunking**: Tự động điều chỉnh chunk size theo model capacity (160-600 words).
+  Overlap 27% optimal. Xem `docs/CHUNKING_STRATEGY.md`.
 - **Hybrid retrieval** (BM25 + dense, hợp nhất bằng Reciprocal Rank Fusion, đa dạng
   hoá bằng MMR) cho độ chính xác cao mà không cần reranker nặng.
 - **Option-aware retrieval**: truy hồi theo cả câu hỏi lẫn từng đáp án A/B/C/D nên
@@ -51,9 +56,13 @@ ir/
 ├── scripts/                  # tiện ích chạy QUANH hệ thống (không phải lõi)
 │   ├── _bootstrap.py         # thêm src/ vào sys.path cho các script
 │   ├── download_model.py     # tải model về local (chạy khi còn mạng)
+│   ├── switch_model.py       # ⭐ thay đổi embedding model dễ dàng
+│   ├── benchmark_models.py   # so sánh hiệu suất các embedding models
 │   ├── compete.py            # đăng ký/evaluate/reset với Teacher Server
 │   ├── selftest.py           # test end-to-end (dùng LLM trong .env)
 │   └── test_endpoints.py     # test HTTP khi server đang chạy
+├── docs/
+│   └── EMBEDDING_MODELS.md   # ⭐ hướng dẫn chi tiết về các embedding models
 └── tmp/
     ├── request.md            # đặc tả gốc
     └── D22_CLC_Teaching_Slide (Next).pdf
@@ -92,6 +101,11 @@ dùng đúng môi trường này (không cần activate thủ công).
 
 Mở `ir/.env`:
 - `STUDENT_ID` → đổi thành **MSSV viết hoa** của bạn.
+- **Embedding Model** → chọn model phù hợp (xem `docs/EMBEDDING_MODELS.md`):
+  - `keepitreal/vietnamese-sbert` (mặc định, nhỏ, nhanh)
+  - `AITeamVN/Vietnamese_Embedding` ⭐ (tốt nhất cho tiếng Việt)
+  - `intfloat/multilingual-e5-base` (đa ngôn ngữ)
+  - Script tiện ích: `uv run python scripts/switch_model.py --list`
 - **LLM tạm thời** (đang bật): `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME`.
 - **Chuyển sang Teacher proxy** khi thi: đặt `LLM_USE_PROXY=true` (hoặc xoá
   `LLM_BASE_URL`). Khi đó key chính là `STUDENT_ID`, model là `LLM_MODEL`.
@@ -113,6 +127,65 @@ Kiểm tra nhanh khi server đang chạy (mở terminal khác, đứng ở thư 
 uv run python scripts/test_endpoints.py     # /health, /upload, 3 câu /ask
 uv run python scripts/selftest.py           # 5 câu, đo accuracy + thời gian
 ```
+
+## Quản lý Embedding Models
+
+### Xem model hiện tại:
+```powershell
+uv run python scripts/switch_model.py
+```
+
+### Danh sách models có sẵn:
+```powershell
+uv run python scripts/switch_model.py --list
+```
+
+### Thay đổi model:
+```powershell
+# Vietnamese models (khuyến nghị)
+uv run python scripts/switch_model.py --set AITeamVN/Vietnamese_Embedding
+uv run python scripts/switch_model.py --set dangvantuan/vietnamese-embedding
+
+# Multilingual models
+uv run python scripts/switch_model.py --set intfloat/multilingual-e5-base
+uv run python scripts/switch_model.py --set jinaai/jina-embeddings-v5-text-nano
+```
+
+### So sánh hiệu suất:
+```powershell
+uv run python scripts/benchmark_models.py   # test tất cả models
+```
+
+> **Lưu ý**: Sau khi thay đổi model, phải **restart server** để load model mới.
+> Xem hướng dẫn chi tiết trong `docs/EMBEDDING_MODELS.md`.
+
+## Quản lý Vector Cache ⚡
+
+Embeddings được **tự động cache per model**. Switch model rồi quay lại → load cache (15x faster!).
+
+### Xem cache statistics:
+```powershell
+uv run python scripts/manage_cache.py stats
+```
+
+### List cached files:
+```powershell
+uv run python scripts/manage_cache.py list
+```
+
+### Clear cache:
+```powershell
+# Clear tất cả
+uv run python scripts/manage_cache.py clear
+
+# Clear một model cụ thể
+uv run python scripts/manage_cache.py clear --model keepitreal/vietnamese-sbert
+
+# Clear một document
+uv run python scripts/manage_cache.py clear --doc doc_123
+```
+
+> **Tip**: Cache giúp test nhiều models nhanh chóng. Xem chi tiết: `docs/VECTOR_CACHE.md`
 
 ## Thi đấu (khi Teacher Server hoạt động)
 
@@ -140,6 +213,8 @@ uv run python scripts/compete.py reset         # reset nếu cần
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
+| `EMBED_MODEL_NAME` | keepitreal/vietnamese-sbert | Model embedding (xem docs/EMBEDDING_MODELS.md) |
+| `EMBED_MAX_SEQ_LEN` | 256 | Độ dài sequence tối đa (auto-detect theo model) |
 | `CHUNK_SIZE_WORDS` / `CHUNK_OVERLAP_WORDS` | 180 / 40 | kích thước & overlap chunk |
 | `TOP_K_CONTEXT` | 5 | số chunk đưa vào LLM |
 | `TOP_K_DENSE` / `TOP_K_BM25` | 12 / 12 | số ứng viên mỗi retriever |
