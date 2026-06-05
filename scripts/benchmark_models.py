@@ -36,6 +36,8 @@ MODELS_TO_TEST = [
     "AITeamVN/Vietnamese_Embedding",
     "thanhtantran/Vietnamese_Embedding_v2",
     "dangvantuan/vietnamese-embedding",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "sentence-transformers/all-MiniLM-L6-v2",
     "jinaai/jina-embeddings-v5-text-nano",
     "jinaai/jina-embeddings-v5-text-small",
     "intfloat/multilingual-e5-base",

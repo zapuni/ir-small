@@ -73,6 +73,18 @@ MODEL_CONFIGS = {
         "passage_prefix": "",
         "max_seq_length": 256,
     },
+    # Sentence-transformers: all-MiniLM-L6-v2 (English, small & fast)
+    "all-minilm-l6-v2": {
+        "query_prefix": "",
+        "passage_prefix": "",
+        "max_seq_length": 256,
+    },
+    # Sentence-transformers: paraphrase-multilingual-MiniLM-L12-v2 (50+ languages)
+    "paraphrase-multilingual-minilm": {
+        "query_prefix": "",
+        "passage_prefix": "",
+        "max_seq_length": 128,
+    },
 }
 
 

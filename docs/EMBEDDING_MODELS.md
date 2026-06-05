@@ -82,6 +82,63 @@ EMBED_MAX_SEQ_LEN=256
 
 ### 2. Models Đa Ngôn Ngữ (Multilingual)
 
+#### **intfloat/multilingual-e5-base** ⭐ Proven
+- **Kích thước**: ~1.1GB (278M params)
+- **Chiều vector**: 768
+- **Max seq length**: 512 tokens
+- **Ngôn ngữ**: 94 languages including Vietnamese
+- **Ưu điểm**:
+  - Rất phổ biến và đáng tin cậy
+  - Đã được test kỹ trên nhiều task
+  - Chất lượng ổn định
+- **Nhược điểm**: 
+  - **Yêu cầu prefix**: `query: ` cho câu hỏi, `passage: ` cho văn bản
+  - System tự động xử lý prefix
+- **Khuyến nghị**: **Lựa chọn tốt nhất nếu cần multilingual**
+- **Cấu hình**:
+```bash
+EMBED_MODEL_NAME=intfloat/multilingual-e5-base
+EMBED_MAX_SEQ_LEN=512
+```
+
+#### **sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2**
+- **Kích thước**: ~420MB (118M params)
+- **Chiều vector**: 384
+- **Max seq length**: 128 tokens
+- **Ngôn ngữ**: 50+ languages including Vietnamese
+- **Ưu điểm**:
+  - Compact và nhanh
+  - Đã được sử dụng rộng rãi (classic model)
+  - Tốt cho paraphrase và similarity
+- **Nhược điểm**: 
+  - Context ngắn (128 tokens)
+  - Chất lượng thấp hơn models mới
+- **Khuyến nghị**: Dùng khi cần model nhỏ multilingual
+- **Cấu hình**:
+```bash
+EMBED_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+EMBED_MAX_SEQ_LEN=128
+```
+
+#### **sentence-transformers/all-MiniLM-L6-v2**
+- **Kích thước**: ~80MB (22M params)
+- **Chiều vector**: 384
+- **Max seq length**: 256 tokens
+- **Ngôn ngữ**: English only (không tốt cho tiếng Việt)
+- **Ưu điểm**:
+  - Cực kỳ nhỏ và nhanh
+  - Rất phổ biến (most downloaded on HF)
+  - Tốt cho English semantic search
+- **Nhược điểm**: 
+  - **Chỉ English** - không khuyến nghị cho Vietnamese
+  - Chất lượng thấp cho tiếng Việt
+- **Khuyến nghị**: Chỉ dùng nếu corpus là English
+- **Cấu hình**:
+```bash
+EMBED_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+EMBED_MAX_SEQ_LEN=256
+```
+
 #### **jinaai/jina-embeddings-v5-text-nano** ⭐ Modern
 - **Kích thước**: ~950MB (239M params)
 - **Chiều vector**: 512

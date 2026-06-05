@@ -76,6 +76,16 @@ MODEL_CHUNK_CONFIGS = {
         "overlap": 85,
         "reasoning": "512 tokens (XLM-RoBERTa), balanced approach",
     },
+    "all-minilm-l6-v2": {
+        "chunk_size": 160,
+        "overlap": 45,
+        "reasoning": "256 tokens max, small & fast model",
+    },
+    "paraphrase-multilingual-minilm": {
+        "chunk_size": 80,
+        "overlap": 22,
+        "reasoning": "128 tokens max, very compact model",
+    },
 }
 
 

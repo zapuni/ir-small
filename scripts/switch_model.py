@@ -26,9 +26,13 @@ AVAILABLE_MODELS = {
         ("dangvantuan/vietnamese-embedding", "PhoBERT-based, balanced (768 dim)"),
     ],
     "Multilingual Models": [
-        ("jinaai/jina-embeddings-v5-text-nano", "Compact, modern (512 dim, 239M params)"),
-        ("jinaai/jina-embeddings-v5-text-small", "Better quality (512 dim, 677M params)"),
-        ("intfloat/multilingual-e5-base", "⭐ Proven multilingual (768 dim, 278M params)"),
+        ("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", "Compact multilingual (384 dim, 50+ langs)"),
+        ("intfloat/multilingual-e5-base", "⭐ Proven multilingual (768 dim, 94 langs)"),
+        ("jinaai/jina-embeddings-v5-text-nano", "Modern compact (512 dim, 100+ langs)"),
+        ("jinaai/jina-embeddings-v5-text-small", "Better quality (512 dim, 100+ langs)"),
+    ],
+    "English Models (Not Recommended for Vietnamese)": [
+        ("sentence-transformers/all-MiniLM-L6-v2", "Ultra-fast English only (384 dim, 22M params)"),
     ],
 }
 
