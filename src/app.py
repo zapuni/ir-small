@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 import config
+import docstore
 from embedder import warm_up
 from llm import fallback_answer, get_client, trim_contexts
 from retriever import INDEX
@@ -67,7 +68,23 @@ async def lifespan(app: FastAPI):
         get_client()  # initialise LLM client early (cheap)
     except Exception as exc:
         print(f"[app] LLM client init warning: {exc!r}")
-    print(f"[app] Warm-up done in {time.time() - t0:.1f}s. Ready to serve.")
+    print(f"[app] Warm-up done in {time.time() - t0:.1f}s.")
+
+    # Restore the index from disk so a restart doesn't need a fresh /upload.
+    # If the current model's vector cache exists -> loads in seconds (no embed).
+    # Otherwise it re-embeds the saved text locally (offline) and caches it.
+    saved = docstore.load_document()
+    if saved is not None:
+        doc_id, text = saved
+        print(f"[app] Restoring index for model={config.EMBED_MODEL_NAME} ...")
+        t1 = time.time()
+        try:
+            n = INDEX.build(text, doc_id=doc_id, use_cache=True)
+            print(f"[app] Restored {n} chunks in {time.time() - t1:.1f}s. Ready to serve.")
+        except Exception as exc:
+            print(f"[app] Index restore failed: {exc!r}. Will wait for /upload.")
+    else:
+        print("[app] No saved document. Waiting for /upload. Ready to serve.")
     yield
     print("[app] Shutting down.")
 
@@ -91,7 +108,13 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "indexed": INDEX.ready, "chunks": len(INDEX.chunks)}
+    return {
+        "status": "ok",
+        "indexed": INDEX.ready,
+        "chunks": len(INDEX.chunks),
+        "embed_model": config.EMBED_MODEL_NAME,
+        "saved_document": docstore.has_document(),
+    }
 
 
 @app.get("/cache/stats")
@@ -121,10 +144,19 @@ def upload(req: UploadRequest):
     """Receive a document, chunk + embed + index it."""
     t0 = time.time()
     doc_id = req.doc_id or "none"
-    n_chunks = INDEX.build(req.text or "", doc_id=doc_id, use_cache=True)
+    text = req.text or ""
+
+    # Persist the raw text FIRST so we never lose it, even if embedding is slow
+    # and the Teacher reports a timeout. We can re-embed / restart from this.
+    try:
+        docstore.save_document(doc_id, text)
+    except Exception as exc:
+        print(f"[upload] Warning: failed to persist document: {exc!r}")
+
+    n_chunks = INDEX.build(text, doc_id=doc_id, use_cache=True)
     print(
         f"[upload] doc_id={doc_id} chunks={n_chunks} "
-        f"chars={len(req.text or '')} took={time.time() - t0:.2f}s"
+        f"chars={len(text)} took={time.time() - t0:.2f}s"
     )
     return UploadResponse(
         status="success" if n_chunks > 0 else "empty",

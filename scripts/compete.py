@@ -8,7 +8,13 @@ values are read from .env via config.py.
 Usage:
     python scripts/compete.py register          # auto-detect LAN IP and register
     python scripts/compete.py register --ip 192.168.1.15 --port 5000
-    python scripts/compete.py evaluate          # start the exam (blocks until done)
+
+    # FIRST run (Teacher sends the document via /upload, then asks):
+    python scripts/compete.py evaluate
+
+    # SUBSEQUENT runs (document already embedded + cached -> skip /upload):
+    python scripts/compete.py evaluate --document-received
+
     python scripts/compete.py result            # check current score/status
     python scripts/compete.py reset             # reset your session
     python scripts/compete.py run               # register + evaluate in one go
@@ -51,8 +57,18 @@ def _post(path: str, body: dict | None = None) -> dict:
     try:
         data = r.json()
         print(json.dumps(data, ensure_ascii=False, indent=2))
+
+        # Parse response based on endpoint (Modified / Modified 2 schema).
+        if "/register" in path and "message" in data:
+            print(f"✓ Registration: {data['message']}")
+        elif "/evaluate" in path and "final_score" in data:
+            print(f"✓ Evaluation complete! Final score: {data['final_score']}")
+        elif "/reset" in path and "score" in data:
+            print(f"✓ Reset complete. Score: {data['score']}")
+
         return data
-    except Exception:
+    except Exception as e:
+        print(f"Error parsing response: {e}")
         print(r.text)
         return {}
 
@@ -77,9 +93,27 @@ def cmd_register(ip: str | None, port: int) -> None:
     _post("/competition/register", {"server_url": server_url})
 
 
-def cmd_evaluate() -> None:
-    print("[evaluate] Starting exam. Teacher will call /upload then 10x /ask.")
-    _post("/competition/evaluate")
+def cmd_evaluate(document_received: bool = False) -> None:
+    """
+    Start the exam (Modified 2: body carries document_received).
+
+    document_received=False (default, FIRST run):
+        Teacher will call /upload (send the document) then the questions.
+        Use this the first time so your server receives + embeds + saves the
+        document. Even if the Teacher reports an /upload timeout, your server
+        keeps embedding in the background and persists the vector cache.
+
+    document_received=True (SUBSEQUENT runs):
+        Tells the Teacher you ALREADY have the document, so it SKIPS /upload
+        and goes straight to the questions. Use this after the document has
+        been embedded + cached (and your server reloaded it on startup), to
+        avoid the slow upload/embed step and the 120s timeout.
+    """
+    if document_received:
+        print("[evaluate] document_received=True -> Teacher SKIPS /upload, asks questions directly.")
+    else:
+        print("[evaluate] document_received=False -> Teacher will call /upload first, then ask.")
+    _post("/competition/evaluate", {"document_received": document_received})
 
 
 def cmd_result() -> None:
@@ -98,27 +132,38 @@ def main() -> None:
     pr.add_argument("--ip", default=None, help="LAN IP (auto-detected if omitted)")
     pr.add_argument("--port", type=int, default=config.PORT)
 
-    sub.add_parser("evaluate", help="start the exam")
+    pe = sub.add_parser("evaluate", help="start the exam")
+    pe.add_argument(
+        "--document-received",
+        action="store_true",
+        help="tell Teacher you already have the document (skips /upload).",
+    )
+
     sub.add_parser("result", help="check score/status")
     sub.add_parser("reset", help="reset your session")
 
     pn = sub.add_parser("run", help="register then evaluate")
     pn.add_argument("--ip", default=None)
     pn.add_argument("--port", type=int, default=config.PORT)
+    pn.add_argument(
+        "--document-received",
+        action="store_true",
+        help="tell Teacher you already have the document (skips /upload).",
+    )
 
     args = p.parse_args()
 
     if args.cmd == "register":
         cmd_register(args.ip, args.port)
     elif args.cmd == "evaluate":
-        cmd_evaluate()
+        cmd_evaluate(document_received=args.document_received)
     elif args.cmd == "result":
         cmd_result()
     elif args.cmd == "reset":
         cmd_reset()
     elif args.cmd == "run":
         cmd_register(args.ip, args.port)
-        cmd_evaluate()
+        cmd_evaluate(document_received=args.document_received)
     else:
         p.print_help()
         sys.exit(1)

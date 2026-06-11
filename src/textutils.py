@@ -25,17 +25,76 @@ except Exception:  # pyvi missing -> fall back to whitespace
         return text
 
 
+# --------------------------------------------------------------------------- #
+# Date / number / document-code normalization for BM25 (structure-agnostic)    #
+# --------------------------------------------------------------------------- #
+# These run on the RAW (lowercased) text BEFORE word segmentation, and produce
+# EXTRA canonical tokens that are appended to the normal token list. They never
+# remove anything, so dense embeddings are untouched and lexical recall on
+# factoid queries (dates, decision numbers) strictly improves. Numbers are
+# normalized via int() so "11/06/2024" and "ngày 11/6/2024" map to the SAME
+# token (dmy_11_6_2024) on both the document and the query side.
+
+# 11/06/2024, 11-6-2024, 11.06.24  (day/month/year, any separator)
+_DATE_NUM_RE = re.compile(r"(?<!\d)(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})(?!\d)")
+# "ngày 11 tháng 6 năm 2024"  (Vietnamese spelled-out date)
+_DATE_TEXT_RE = re.compile(
+    r"ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{2,4})"
+)
+# "tháng 6/2024" or "tháng 6 năm 2024"  (month/year only)
+_MONTH_YEAR_RE = re.compile(r"tháng\s+(\d{1,2})\s*(?:/|năm\s+)\s*(\d{4})")
+# Document codes: 89/qđ-ttg, 234/tb-bgdđt, 459/tccb, 1384/bgdđt-gdđh
+_CODE_RE = re.compile(
+    r"(?<![\w/])(\d+)\s*/\s*([a-zà-ỹ]+(?:\s*-\s*[a-zà-ỹ]+)*)", re.UNICODE
+)
+# 4-digit years standing alone (e.g. "năm 2024")
+_YEAR_RE = re.compile(r"(?<!\d)(19|20)(\d{2})(?!\d)")
+
+
+def _date_tokens(d: int, mo: int, y: int) -> List[str]:
+    """Canonical tokens for a (day, month, year). Year kept as-is (2- or 4-digit)."""
+    if not (1 <= d <= 31 and 1 <= mo <= 12):
+        return []
+    return [f"dmy_{d}_{mo}_{y}", f"dm_{d}_{mo}", f"my_{mo}_{y}"]
+
+
+def _special_tokens(text_lower: str) -> List[str]:
+    """Extract canonical date / month-year / document-code tokens from raw text."""
+    toks: List[str] = []
+    for m in _DATE_NUM_RE.finditer(text_lower):
+        toks += _date_tokens(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    for m in _DATE_TEXT_RE.finditer(text_lower):
+        toks += _date_tokens(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    for m in _MONTH_YEAR_RE.finditer(text_lower):
+        mo, y = int(m.group(1)), int(m.group(2))
+        if 1 <= mo <= 12:
+            toks.append(f"my_{mo}_{y}")
+    for m in _CODE_RE.finditer(text_lower):
+        letters = re.sub(r"\s*-\s*", "_", m.group(2))
+        letters = re.sub(r"\s+", "", letters)
+        toks.append(f"code_{m.group(1)}_{letters}")
+    for m in _YEAR_RE.finditer(text_lower):
+        toks.append(f"year_{m.group(1)}{m.group(2)}")
+    return toks
+
+
 def tokenize_vi(text: str) -> List[str]:
     """
-    Lowercase + word-segment + split into tokens for BM25.
+    Lowercase + word-segment + split into tokens for BM25, PLUS canonical
+    date/number/code tokens (structure-agnostic) for precise factoid matching.
+
     pyvi joins multi-syllable words with '_' which keeps Vietnamese phrases
-    together (e.g. 'truy_vấn'), greatly improving lexical matching.
+    together (e.g. 'truy_vấn'), greatly improving lexical matching. We append
+    normalized tokens for dates ("dmy_11_6_2024"), month/year ("my_6_2024"),
+    years ("year_2024") and document codes ("code_89_qđ_ttg") so a query like
+    "ngày 11/6/2024" or "Quyết định 89/QĐ-TTg" matches the document exactly.
     """
     text = text.lower()
+    special = _special_tokens(text)
     seg = _segment(text)
     # keep word characters (incl. the '_' joiner and Vietnamese diacritics)
     tokens = re.findall(r"[0-9A-Za-zÀ-ỹ_]+", seg, flags=re.UNICODE)
-    return tokens
+    return tokens + special
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +356,12 @@ def extract_answer_letter(text: str, valid: List[str] | None = None) -> str | No
     if t in valid:
         return t
 
+    # 1b) a single A-D letter wrapped in markdown / quotes / punctuation, e.g.
+    #     "**B**", "`C`", "(D)", '"A"', "B." -> the only letter present.
+    bare = re.sub(r"[^A-D]", "", t)
+    if len(bare) == 1 and bare in valid:
+        return bare
+
     # 2) JSON {"answer":"B"} (common for small Qwen MCQ prompts)
     m_json = re.search(r'"ANSWER"\s*:\s*"([ABCD])"', t)
     if m_json and m_json.group(1) in valid:
@@ -306,7 +371,8 @@ def extract_answer_letter(text: str, valid: List[str] | None = None) -> str | No
     concl = re.findall(
         r"(?:CORRECT\s+ANSWER\s+IS|ANSWER\s+IS|FINAL\s+ANSWER\s*[:\-]?|"
         r"ANSWER\s*[:\-]|ĐÁP\s*ÁN\s*(?:LÀ|ĐÚNG\s*LÀ)?\s*[:\-]?|"
-        r"DAP\s*AN\s*(?:LA)?\s*[:\-]?|CHỌN|CHON)\s*\(?\s*([ABCD])\b",
+        r"DAP\s*AN\s*(?:LA)?\s*[:\-]?|PHƯƠNG\s*ÁN\s*[:\-]?|"
+        r"LỰA\s*CHỌN\s*[:\-]?|CHỌN|CHON)\s*\(?\s*([ABCD])\b",
         t,
     )
     concl = [x for x in concl if x in valid]

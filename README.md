@@ -189,17 +189,44 @@ uv run python scripts/manage_cache.py clear --doc doc_123
 
 ## Thi đấu (khi Teacher Server hoạt động)
 
-Hiện Teacher Server đang **offline**; mọi thứ đã cấu hình sẵn nên khi nó bật lên
-chỉ cần chạy (server `app.py` phải đang chạy ở terminal khác):
+Luật mới (**Modified 2**): Teacher bơm **100 câu hỏi**, mỗi người được gọi
+`/evaluate` **tối đa 5 lần** (điểm cao nhất tính). API `/evaluate` nay nhận body
+`{"document_received": true|false}` để có thể **bỏ qua bước `/upload`** (tránh
+timeout 120s khi embedding chậm).
+
+Quy trình khuyến nghị (server `app.py` phải đang chạy ở terminal khác):
 
 ```powershell
-uv run python scripts/compete.py register     # tự dò IP LAN, đăng ký server_url
-uv run python scripts/compete.py evaluate      # bắt đầu thi (Teacher gọi /upload rồi 10x /ask)
-uv run python scripts/compete.py result        # xem điểm/tiến độ
-uv run python scripts/compete.py reset         # reset nếu cần
+# --- TRONG GIỜ SETUP (CÒN INTERNET) ---
+uv run python scripts/download_all_models.py   # tải toàn bộ model về local
+
+# --- SAU KHI NGẮT MẠNG (chỉ LAN) ---
+# 1) Lần evaluate ĐẦU TIÊN: nhận tài liệu, embed bằng model mặc định, LƯU xuống đĩa.
+uv run python scripts/compete.py register
+uv run python scripts/compete.py evaluate            # document_received=false
+#    -> Teacher gọi /upload; kể cả báo timeout, server vẫn embed xong + lưu cache + lưu text.
+
+# 2) (Tuỳ chọn) Embed sẵn text đã lưu với các model khác để đổi nhanh sau này:
+uv run python scripts/embed_all_models.py            # đọc tmp/model-embedding.md
+
+# 3) Các lần evaluate SAU (đã có VectorDB trên đĩa, đã reload lúc khởi động):
+uv run python scripts/compete.py reset
+uv run python scripts/compete.py evaluate --document-received   # Teacher BỎ QUA /upload, hỏi luôn
 ```
 
+> **Lưu document + VectorDB:** `/upload` tự lưu text vào `cache/last_document.json`
+> và embeddings vào `cache/embeddings/<model>/`. Khi **khởi động lại server**
+> (để sửa prompt/logic/đổi model), index được **nạp lại từ cache trong vài giây**
+> — không cần Teacher gửi lại tài liệu, không tốn lượt `/evaluate`.
+
 `register` tự phát hiện IP LAN; nếu cần ép tay: `uv run python scripts/compete.py register --ip 192.168.1.15 --port 5000`.
+
+### Đổi embedding model giữa các lần thi
+
+```powershell
+uv run python scripts/switch_model.py --set AITeamVN/Vietnamese_Embedding
+# restart server -> nó load embeddings của model đó từ cache (đã chạy embed_all_models.py)
+```
 
 ## API (Student Server)
 
