@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 import config
 import docstore
+import reqlog
 from embedder import warm_up
 from llm import fallback_answer, get_client, trim_contexts
 from retriever import INDEX
@@ -150,6 +151,7 @@ def upload(req: UploadRequest):
     # and the Teacher reports a timeout. We can re-embed / restart from this.
     try:
         docstore.save_document(doc_id, text)
+        reqlog.log_document(doc_id, text)
     except Exception as exc:
         print(f"[upload] Warning: failed to persist document: {exc!r}")
 
@@ -172,14 +174,11 @@ def ask(req: AskRequest):
     deadline = t0 + config.ASK_DEADLINE
     mcq = parse_mc_question(req.question or "")
 
-    # Build retrieval queries: the stem + each option (option-aware retrieval).
-    queries: List[str] = [mcq.stem or mcq.raw]
-    if mcq.has_options:
-        for letter in mcq.option_letters():
-            queries.append(f"{mcq.stem} {mcq.options[letter]}")
-
-    results = INDEX.search(queries, top_k=config.TOP_K_CONTEXT)
-    contexts = trim_contexts([r.chunk for r in results])
+    # Option-aware retrieval + per-option exact-match evidence (dates, emails,
+    # phones, codes). Returns context chunk texts ready for the LLM.
+    contexts = trim_contexts(
+        INDEX.search_mcq(mcq.stem or mcq.raw, mcq.options, top_k=config.TOP_K_CONTEXT)
+    )
 
     # 1) Try the LLM, but never exceed the wall-clock deadline. Run it in a
     #    worker thread so a hung socket can't block past the budget.
@@ -212,6 +211,7 @@ def ask(req: AskRequest):
         f"[ask] answer={letter} ctx={len(contexts)} "
         f"opts={mcq.option_letters()} took={time.monotonic() - t0:.2f}s"
     )
+    reqlog.log_question(req.question or "", letter, len(contexts), time.monotonic() - t0)
     return AskResponse(answer=letter, sources=contexts)
 
 

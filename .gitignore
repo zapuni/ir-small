@@ -16,6 +16,9 @@ src/models/
 # Vector embeddings cache (regenerate on demand)
 cache/
 
+# Competition request logs (document text + questions per round)
+logs/
+
 # OS
 Thumbs.db
 .DS_Store

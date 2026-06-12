@@ -245,6 +245,62 @@ class HybridIndex:
                 for i in ordered
             ]
 
+    # ------------------------------------------------------------------ #
+    # MCQ search: option-aware fusion + guaranteed per-option evidence    #
+    # ------------------------------------------------------------------ #
+    def search_mcq(
+        self,
+        stem: str,
+        options: Dict[str, str] | None = None,
+        top_k: int | None = None,
+    ) -> List[str]:
+        """
+        Retrieval tuned for multiple-choice questions. Returns a list of chunk
+        TEXTS (context) for the LLM.
+
+        Two complementary signals are combined:
+          1. Option-aware hybrid fusion (stem + each "stem + option" query),
+             RRF + MMR — the existing behaviour, good for semantic relevance.
+          2. Per-option EXACT-MATCH evidence: for each option value we add the
+             single best BM25 chunk. This guarantees the chunk that lexically
+             matches each candidate answer (dates, emails, phones, codes) is in
+             context, even when RRF fusion would otherwise dilute that strong
+             single-query signal out of the top-k.
+
+        Evidence chunks are placed right after the top few fused chunks so they
+        always survive the downstream character-budget trim.
+        """
+        with self._lock:
+            if not self.ready or not self.chunks:
+                return []
+
+            top_k = top_k or config.TOP_K_CONTEXT
+            opts = options or {}
+
+            queries = [stem] + [f"{stem} {opts[k]}" for k in sorted(opts.keys())]
+            results = self.search(queries, top_k=top_k)
+            fused_idx = [r.index for r in results]
+
+            # Per-option exact-match evidence (BM25 top-1 of the bare value).
+            evidence_idx: List[int] = []
+            for k in sorted(opts.keys()):
+                value = (opts[k] or "").strip()
+                if not value:
+                    continue
+                bm = self._bm25_search(value, 1)
+                if bm:
+                    evidence_idx.append(bm[0][0])
+
+            # Merge: a few most-relevant fused chunks first, then guaranteed
+            # evidence, then the rest of the fused chunks (dedup, keep order).
+            head, rest = fused_idx[:3], fused_idx[3:]
+            merged: List[int] = []
+            for i in head + evidence_idx + rest:
+                if i not in merged:
+                    merged.append(i)
+
+            return [self.chunks[i] for i in merged]
+
 
 # A single global index instance shared by the FastAPI app.
 INDEX = HybridIndex()
