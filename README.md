@@ -3,37 +3,82 @@
 Hệ thống RAG trả lời câu hỏi trắc nghiệm (A/B/C/D), tối ưu cho **CPU laptop, không GPU**,
 phản hồi nhanh cho từng request. Xây dựng theo đúng đặc tả trong `tmp/request.md`.
 
+---
+
+## ⚡ TRIỂN KHAI NHANH NGÀY THI (đọc mục này là đủ)
+
+> Chi tiết chiến lược 5 lượt + chọn model: xem `docs/COMPETITION_PLAYBOOK.md`.
+
+### B0 — Giờ setup (CÒN Internet)
+```powershell
+uv sync                                          # cài môi trường (CPU torch)
+uv run python scripts/download_all_models.py     # tải TẤT CẢ model về local
+```
+Sửa `ir/.env`: đặt `STUDENT_ID=<MSSV viết hoa>`. Khi thi thật, dùng Teacher proxy:
+đặt `LLM_USE_PROXY=true` (key = STUDENT_ID, model = `LLM_MODEL`).
+Model mặc định đã set sẵn: `paraphrase-multilingual-MiniLM-L12-v2` (robust nhất).
+
+### B1 — Bật server (để chạy suốt, terminal riêng)
+```powershell
+uv run python src/app.py        # http://0.0.0.0:5000
+```
+
+### B2 — Lượt 1: đăng ký + thi (BẮT BUỘC nhận tài liệu)
+```powershell
+uv run python scripts/compete.py register
+uv run python scripts/compete.py evaluate              # document_received=false
+uv run python scripts/embed_all_models.py              # (tuỳ chọn) embed sẵn các model khác
+```
+Server tự **lưu tài liệu + 100 câu hỏi vào `logs/eval/`** và cache vector xuống đĩa.
+
+### B3 — Đọc log để biết đề rồi tinh chỉnh
+Mở `logs/eval/<round>__questions.jsonl` (100 câu thật + đáp án đã trả).
+- Câu **factoid** (ngày/số/tên/mã) → đổi `dangvantuan/vietnamese-embedding` hoặc `keepitreal/vietnamese-sbert`.
+- Câu **ngữ nghĩa/suy luận** → giữ `paraphrase-multilingual` hoặc thử `intfloat/multilingual-e5-base`.
+
+### B4 — Lượt 2–5: đổi model/config rồi thi lại (KHÔNG cần upload lại)
+```powershell
+uv run python scripts/switch_model.py --set dangvantuan/vietnamese-embedding
+#  (đổi sang model chunk-lớn e5/AITeamVN thì đặt CONTEXT_MAX_CHARS=12000 trong .env)
+#  >>> RESTART server (Ctrl+C rồi chạy lại app.py) — index nạp lại từ cache trong vài giây <<<
+uv run python scripts/compete.py reset
+uv run python scripts/compete.py evaluate --document-received   # Teacher BỎ QUA /upload
+```
+Lặp lại, giữ lượt điểm cao nhất (điểm cao nhất được tính).
+
+---
+
 ## Kiến trúc (tối ưu độ chính xác + tốc độ trên CPU)
 
 ```
-          /upload                         /ask
- text ──► chunk (câu, ~180 từ, overlap 40)  question ─► tách stem + A/B/C/D
-       └► embed (multi-model support, CPU)          └► hybrid retrieve:
-       └► cache embeddings per model ⚡              • dense (cosine)
-       └► BM25 (pyvi word-seg)                            • BM25 (lexical)
-       └► lưu vào index trong RAM                         • RRF fusion + MMR
-                                                       └► LLM (qua .env) ─► 1 ký tự
-                                                       └► fallback embedding nếu LLM lỗi
+          /upload                              /ask
+ text ──► chunk (adaptive theo model)   question ─► tách stem + A/B/C/D
+       └► embed (multi-model, CPU)             └► hybrid retrieve:
+       └► cache embeddings per model ⚡            • dense (cosine) + BM25 (lexical)
+       └► lưu text + index ra đĩa                  • RRF fusion + MMR
+       └► log tài liệu (logs/eval/)                • + option-evidence (BM25 top-1/đáp án)
+                                                 └► LLM (qua .env) ─► 1 ký tự
+                                                 └► fallback embedding nếu LLM lỗi
+                                                 └► log câu hỏi + đáp án (logs/eval/)
 ```
 
 Điểm chính:
-- **Multi-model embedding support**: Dễ dàng thay đổi model trong `.env`, hỗ trợ
-  Vietnamese-specific (AITeamVN, dangvantuan, keepitreal) và multilingual models
-  (Jina AI v5, E5). Mỗi model cache riêng biệt. Xem `docs/EMBEDDING_MODELS.md`.
-- **Persistent vector cache** ⚡: Embeddings được cache per model. Switch model rồi
-  quay lại → load cache, không embed lại (15x faster!). Xem `docs/VECTOR_CACHE.md`.
-- **Adaptive chunking**: Tự động điều chỉnh chunk size theo model capacity (160-600 words).
-  Overlap 27% optimal. Xem `docs/CHUNKING_STRATEGY.md`.
-- **Hybrid retrieval** (BM25 + dense, hợp nhất bằng Reciprocal Rank Fusion, đa dạng
-  hoá bằng MMR) cho độ chính xác cao mà không cần reranker nặng.
-- **Option-aware retrieval**: truy hồi theo cả câu hỏi lẫn từng đáp án A/B/C/D nên
-  ngữ cảnh bao phủ mọi lựa chọn.
-- **Tốc độ**: model nạp 1 lần lúc khởi động; cosine brute-force bằng numpy (corpus
-  chỉ 1 tài liệu nên cực nhanh); không cần FAISS.
-- **An toàn thời gian**: `/ask` có hạn chót wall-clock (`ASK_DEADLINE`, mặc định 45s
-  < giới hạn 60s). LLM chạy trong thread riêng; nếu treo/quá hạn → tự động fallback.
-- **Luôn trả về 1 ký tự hợp lệ** A/B/C/D, kể cả khi LLM offline (fallback bằng độ
-  tương đồng embedding).
+- **Option-evidence retrieval** ⭐ (đòn bẩy chính): ngoài hybrid RRF+MMR, đảm bảo đưa
+  vào context **chunk khớp BM25 chính xác nhất cho TỪNG đáp án A/B/C/D**. Khắc phục
+  việc RRF pha loãng tín hiệu khớp-chính-xác (ngày/email/SĐT/mã) → recall 75%→97%.
+- **Chuẩn hoá ngày/số/mã cho BM25** (structure-agnostic): `11/06/2024` ≡ `11/6/2024`,
+  giữ `89/QĐ-TTg` nguyên khối → khớp factoid chính xác trên mọi loại văn bản.
+- **Multi-model embedding**: đổi model trong `.env`, mỗi model cache riêng. Mặc định
+  `paraphrase-multilingual-MiniLM-L12-v2` (robust nhất). Xem `docs/COMPETITION_PLAYBOOK.md`.
+- **Persistent cache + docstore** ⚡: text + embeddings lưu ra đĩa. Restart server /
+  đổi model → nạp lại index trong vài giây, không cần Teacher gửi lại tài liệu.
+- **Request logging**: mỗi lượt thi, tài liệu + 100 câu hỏi được lưu `logs/eval/` để
+  phân tích và tinh chỉnh cho lượt sau.
+- **Adaptive chunking**: tự điều chỉnh chunk size theo model (80–320 từ, overlap ~27%).
+- **Tốc độ**: model nạp 1 lần lúc khởi động; cosine brute-force bằng numpy; ~1s/câu.
+- **An toàn thời gian**: `/ask` có hạn chót (`ASK_DEADLINE`=45s < 60s); LLM treo/quá hạn
+  → tự động fallback bằng độ tương đồng embedding.
+- **Luôn trả về 1 ký tự hợp lệ** A/B/C/D, kể cả khi LLM offline.
 
 ## Cấu trúc thư mục
 
@@ -47,25 +92,30 @@ ir/
 ├── README.md
 ├── src/                      # ⭐ LÕI HỆ THỐNG — đọc thư mục này là hiểu toàn bộ logic
 │   ├── config.py             # đọc .env, chọn LLM (generic vs Teacher proxy)
-│   ├── embedder.py           # vietnamese-sbert trên CPU
-│   ├── textutils.py          # chunking, tokenize tiếng Việt, parse trắc nghiệm
-│   ├── retriever.py          # hybrid BM25 + dense + RRF + MMR
+│   ├── embedder.py           # embedding đa model trên CPU
+│   ├── textutils.py          # chunking, tokenize VI + chuẩn hoá ngày/số/mã, parse trắc nghiệm
+│   ├── retriever.py          # hybrid BM25 + dense + RRF + MMR + search_mcq (option-evidence)
 │   ├── llm.py                # gọi LLM + parse 1 ký tự + fallback
-│   ├── app.py                # FastAPI: /upload, /ask, /health
+│   ├── docstore.py           # lưu/nạp lại text tài liệu (restart không cần upload lại)
+│   ├── reqlog.py             # log tài liệu + 100 câu hỏi mỗi lượt thi (logs/eval/)
+│   ├── vector_cache.py       # cache embeddings ra đĩa, per model
+│   ├── app.py                # FastAPI: /upload, /ask, /health, /cache/*
 │   └── models/               # model đã tải về (offline)
 ├── scripts/                  # tiện ích chạy QUANH hệ thống (không phải lõi)
-│   ├── _bootstrap.py         # thêm src/ vào sys.path cho các script
-│   ├── download_model.py     # tải model về local (chạy khi còn mạng)
-│   ├── switch_model.py       # ⭐ thay đổi embedding model dễ dàng
-│   ├── benchmark_models.py   # so sánh hiệu suất các embedding models
-│   ├── compete.py            # đăng ký/evaluate/reset với Teacher Server
-│   ├── selftest.py           # test end-to-end (dùng LLM trong .env)
+│   ├── download_all_models.py # ⭐ tải TẤT CẢ model (giờ setup, còn mạng)
+│   ├── embed_all_models.py   # ⭐ embed sẵn text đã lưu với mọi model (đổi nhanh)
+│   ├── switch_model.py       # ⭐ đổi embedding model trong .env
+│   ├── compete.py            # register / evaluate (±document_received) / reset / result
+│   ├── eval_questions.py     # ⭐ đo accuracy + recall trên bộ câu hỏi tự sinh
+│   ├── manage_cache.py       # xem/xoá vector cache
+│   ├── benchmark_models.py   # so sánh tốc độ các embedding model
 │   └── test_endpoints.py     # test HTTP khi server đang chạy
 ├── docs/
-│   └── EMBEDDING_MODELS.md   # ⭐ hướng dẫn chi tiết về các embedding models
-└── tmp/
-    ├── request.md            # đặc tả gốc
-    └── D22_CLC_Teaching_Slide (Next).pdf
+│   ├── COMPETITION_PLAYBOOK.md # ⭐ chiến lược 5 lượt + chọn model/config
+│   └── EMBEDDING_MODELS.md   # hướng dẫn chi tiết các embedding model
+├── logs/eval/                # (tự tạo) tài liệu + câu hỏi mỗi lượt thi — git-ignored
+├── cache/                    # (tự tạo) embeddings + last_document.json — git-ignored
+└── tmp/                      # dữ liệu/script thử nghiệm — git-ignored
 ```
 
 > **Đọc code**: toàn bộ logic hệ thống nằm trong `src/`. Luồng đọc gợi ý:
@@ -86,8 +136,8 @@ nên cài lại trên máy thi sẽ ra môi trường y hệt.
 # 1. Tạo venv + cài đúng phiên bản đã khoá (đọc uv.lock)
 uv sync
 
-# 2. Tải model embedding về local (đã tải sẵn vào src/models/)
-uv run python scripts/download_model.py
+# 2. Tải TẤT CẢ model embedding về local (offline-ready)
+uv run python scripts/download_all_models.py
 ```
 
 `uv sync` tự tạo `.venv/` và cài torch bản **CPU** (`2.12.0+cpu`) từ index chính
@@ -101,12 +151,11 @@ dùng đúng môi trường này (không cần activate thủ công).
 
 Mở `ir/.env`:
 - `STUDENT_ID` → đổi thành **MSSV viết hoa** của bạn.
-- **Embedding Model** → chọn model phù hợp (xem `docs/EMBEDDING_MODELS.md`):
-  - `keepitreal/vietnamese-sbert` (mặc định, nhỏ, nhanh)
-  - `AITeamVN/Vietnamese_Embedding` ⭐ (tốt nhất cho tiếng Việt)
-  - `intfloat/multilingual-e5-base` (đa ngôn ngữ)
-  - Script tiện ích: `uv run python scripts/switch_model.py --list`
-- **LLM tạm thời** (đang bật): `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME`.
+- **Embedding Model** (mặc định `paraphrase-multilingual-MiniLM-L12-v2`, robust nhất):
+  - Factoid (ngày/số/tên) → `dangvantuan/vietnamese-embedding` hoặc `keepitreal/vietnamese-sbert`
+  - Ngữ nghĩa/suy luận → `paraphrase-multilingual` hoặc `intfloat/multilingual-e5-base`
+  - Tiện ích: `uv run python scripts/switch_model.py --list`. Xem `docs/COMPETITION_PLAYBOOK.md`.
+- **LLM tạm thời** (dev/local Qwen): `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME`.
 - **Chuyển sang Teacher proxy** khi thi: đặt `LLM_USE_PROXY=true` (hoặc xoá
   `LLM_BASE_URL`). Khi đó key chính là `STUDENT_ID`, model là `LLM_MODEL`.
 
@@ -240,14 +289,14 @@ uv run python scripts/switch_model.py --set AITeamVN/Vietnamese_Embedding
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `EMBED_MODEL_NAME` | keepitreal/vietnamese-sbert | Model embedding (xem docs/EMBEDDING_MODELS.md) |
+| `EMBED_MODEL_NAME` | paraphrase-multilingual-MiniLM-L12-v2 | Model embedding (robust nhất; xem COMPETITION_PLAYBOOK.md) |
 | `EMBED_MAX_SEQ_LEN` | 256 | Độ dài sequence tối đa (auto-detect theo model) |
-| `CHUNK_SIZE_WORDS` / `CHUNK_OVERLAP_WORDS` | 180 / 40 | kích thước & overlap chunk |
-| `TOP_K_CONTEXT` | 5 | số chunk đưa vào LLM |
-| `TOP_K_DENSE` / `TOP_K_BM25` | 12 / 12 | số ứng viên mỗi retriever |
-| `MMR_LAMBDA` | 0.3 | cân bằng liên quan ↔ đa dạng |
+| `CHUNK_ADAPTIVE` | true | Tự chọn chunk size/overlap theo model |
+| `TOP_K_CONTEXT` | 8 | số chunk fused đưa vào LLM (+ tối đa 4 chunk option-evidence) |
+| `TOP_K_DENSE` / `TOP_K_BM25` | 20 / 20 | số ứng viên mỗi retriever |
+| `MMR_LAMBDA` | 0.35 | cân bằng liên quan ↔ đa dạng |
+| `CONTEXT_MAX_CHARS` | 6500 | cắt ngữ cảnh; tăng ~12000 cho model chunk-lớn, giảm ~5000 nếu proxy seq len hẹp |
 | `ASK_DEADLINE` | 45 | hạn chót (giây) cho /ask trước khi fallback |
 | `LLM_PROFILE` | auto | `qwen_small` / `reasoning` / `default` |
-| `LLM_ENABLE_THINKING` | auto | `false` cho Qwen MCQ (nhanh, ~1s/câu) |
+| `LLM_ENABLE_THINKING` | false | tắt thinking cho Qwen MCQ (nhanh, ~1s/câu) |
 | `LLM_MAX_TOKENS` | 96 (Qwen) | 512 cho reasoning model |
-| `CONTEXT_MAX_CHARS` | 5500 | cắt ngữ cảnh vừa seq len proxy |
